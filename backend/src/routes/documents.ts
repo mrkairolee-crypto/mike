@@ -23,6 +23,7 @@ import {
 } from "../lib/documentVersions";
 import { ensureDocAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { AUDIT_ACTIONS, recordAuditEvent } from "../lib/audit";
 
 export const documentsRouter = Router();
 const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
@@ -88,6 +89,15 @@ documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
     ),
   );
   await db.from("documents").delete().eq("id", documentId);
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: res.locals.userEmail as string | undefined,
+    action: AUDIT_ACTIONS.DOCUMENT_DELETED,
+    targetType: "document",
+    targetId: documentId,
+    documentId,
+    req,
+  });
   res.status(204).send();
 });
 
@@ -130,6 +140,18 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
     return void res
       .status(404)
       .json({ detail: "Document not found in storage" });
+
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.DOCUMENT_VIEWED,
+    targetType: "document",
+    targetId: documentId,
+    projectId: (doc.project_id as string | null) ?? null,
+    documentId,
+    metadata: { version_id: active.id, rendition: fileType === "pdf" || (isDocx && active.pdf_storage_path) ? "pdf" : "source" },
+    req,
+  });
 
   if (fileType === "pdf" || (isDocx && active.pdf_storage_path)) {
     res.setHeader("Content-Type", "application/pdf");
@@ -200,6 +222,14 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   );
 
   const content = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.DOCUMENT_ZIP_EXPORTED,
+    targetType: "documents",
+    metadata: { document_count: docs.length, requested_count: document_ids.length },
+    req,
+  });
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", 'attachment; filename="documents.zip"');
   res.send(content);
@@ -243,6 +273,18 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
   if (!url)
     return void res.status(503).json({ detail: "Storage not configured" });
 
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.DOCUMENT_DOWNLOAD_LINK_CREATED,
+    targetType: "document",
+    targetId: documentId,
+    projectId: (doc.project_id as string | null) ?? null,
+    documentId,
+    metadata: { version_id: active.id, filename: downloadFilename, ttl_seconds: 3600 },
+    req,
+  });
+
   res.json({
     url,
     document_id: documentId,
@@ -284,6 +326,18 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
   const raw = await downloadFile(active.storage_path);
   if (!raw)
     return void res.status(404).json({ detail: "Document bytes not available" });
+
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.DOCUMENT_VIEWED,
+    targetType: "document",
+    targetId: documentId,
+    projectId: (doc.project_id as string | null) ?? null,
+    documentId,
+    metadata: { version_id: active.id, rendition: "docx" },
+    req,
+  });
 
   res.setHeader(
     "Content-Type",
@@ -533,6 +587,18 @@ documentsRouter.post(
       .update(documentsUpdate)
       .eq("id", documentId);
 
+    await recordAuditEvent(db, {
+      actorUserId: userId,
+      actorEmail: userEmail,
+      action: AUDIT_ACTIONS.DOCUMENT_VERSION_UPLOADED,
+      targetType: "document_version",
+      targetId: versionRow.id as string,
+      projectId: (doc.project_id as string | null) ?? null,
+      documentId,
+      metadata: { filename: file.originalname, version_number: versionRow.version_number },
+      req,
+    });
+
     res.status(201).json(versionRow);
   },
 );
@@ -574,6 +640,17 @@ documentsRouter.patch(
     if (error || !updated) {
       return void res.status(404).json({ detail: "Version not found" });
     }
+    await recordAuditEvent(db, {
+      actorUserId: userId,
+      actorEmail: userEmail,
+      action: AUDIT_ACTIONS.DOCUMENT_VERSION_RENAMED,
+      targetType: "document_version",
+      targetId: versionId,
+      projectId: (doc.project_id as string | null) ?? null,
+      documentId,
+      metadata: { display_name: displayName },
+      req,
+    });
     res.json(updated);
   },
 );
@@ -815,6 +892,17 @@ async function handleEditResolution(
     remaining_pending: remainingPending ?? 0,
   };
   console.log(`[edit-resolution] returning success payload`, payload);
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.DOCUMENT_EDIT_RESOLVED,
+    targetType: "document_edit",
+    targetId: editId,
+    projectId: (doc.project_id as string | null) ?? null,
+    documentId,
+    metadata: { mode, remaining_pending: remainingPending ?? 0 },
+    req,
+  });
   res.json(payload);
 }
 
@@ -959,6 +1047,16 @@ async function handleDocumentUpload(
     const responseDoc = updated
       ? { ...updated, storage_path: key, pdf_storage_path: pdfStoragePath }
       : updated;
+    await recordAuditEvent(db, {
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.DOCUMENT_UPLOADED,
+      targetType: "document",
+      targetId: docId,
+      projectId,
+      documentId: docId,
+      metadata: { filename, file_type: suffix, size_bytes: content.byteLength, page_count: pageCount },
+      req,
+    });
     return void res.status(201).json(responseDoc);
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);

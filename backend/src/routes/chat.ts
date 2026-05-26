@@ -13,6 +13,7 @@ import {
 import { completeText } from "../lib/llm";
 import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
+import { AUDIT_ACTIONS, recordAuditEvent } from "../lib/audit";
 
 export const chatRouter = Router();
 
@@ -507,6 +508,15 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         }
         chatId = newChat.id as string;
         chatTitle = newChat.title;
+        await recordAuditEvent(db, {
+            actorUserId: userId,
+            actorEmail: userEmail,
+            action: AUDIT_ACTIONS.CHAT_CREATED,
+            targetType: "chat",
+            targetId: chatId,
+            projectId: resolvedProjectId,
+            req,
+        });
     }
 
     devLog("[chat/stream] resolved chatId", chatId);
@@ -558,6 +568,17 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 
     const apiKeys = await getUserApiKeys(userId, db);
 
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.AI_REVIEW_STARTED,
+        targetType: "chat",
+        targetId: chatId,
+        projectId: resolvedProjectId,
+        metadata: { model, message_count: messages.length, document_count: Object.keys(docIndex).length, workflow_count: Object.keys(workflowStore).length },
+        req,
+    });
+
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
@@ -593,6 +614,16 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 .update({ title: lastUser.content.slice(0, 120) })
                 .eq("id", chatId);
         }
+        await recordAuditEvent(db, {
+            actorUserId: userId,
+            actorEmail: userEmail,
+            action: AUDIT_ACTIONS.AI_REVIEW_COMPLETED,
+            targetType: "chat",
+            targetId: chatId,
+            projectId: resolvedProjectId,
+            metadata: { model, event_count: events.length, annotation_count: annotations.length },
+            req,
+        });
     } catch (err) {
         console.error("[chat/stream] error:", err);
         try {
