@@ -1258,6 +1258,7 @@ export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
                 onTitleCommit={handleTitleCommit}
                 onSearchChange={setSearch}
                 onOpenPeople={() => setPeopleModalOpen(true)}
+                onOpenSecurity={() => router.push(`/projects/${projectId}/security`)}
                 onNewChat={handleNewChat}
                 onNewReview={handleNewReview}
             />

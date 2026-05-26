@@ -26,6 +26,20 @@ export interface MikeProject {
   review_count?: number;
 }
 
+export interface ProjectAuditEvent {
+  id: string;
+  created_at: string;
+  actor_user_id?: string | null;
+  actor_email?: string | null;
+  action: string;
+  target_type: string;
+  target_id?: string | null;
+  project_id?: string | null;
+  document_id?: string | null;
+  review_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface MikeDocument {
   id: string;
   user_id?: string;

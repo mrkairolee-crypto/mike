@@ -14,6 +14,7 @@ import type {
     MikeMessage,
     MikeProject,
     MikeWorkflow,
+    ProjectAuditEvent,
     TabularReview,
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
@@ -155,6 +156,20 @@ export async function saveApiKey(
 
 export async function getProject(projectId: string): Promise<MikeProject> {
     return apiRequest<MikeProject>(`/projects/${projectId}`);
+}
+
+export async function listProjectAuditEvents(
+    projectId: string,
+    options?: { limit?: number; offset?: number },
+): Promise<ProjectAuditEvent[]> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set("limit", String(options.limit));
+    if (options?.offset) params.set("offset", String(options.offset));
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const result = await apiRequest<{ events: ProjectAuditEvent[] }>(
+        `/projects/${projectId}/audit-events${suffix}`,
+    );
+    return result.events;
 }
 
 export async function updateProject(
