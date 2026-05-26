@@ -6,10 +6,11 @@ import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
 } from "../lib/documentVersions";
-import { downloadFile, uploadFile, storageKey } from "../lib/storage";
+import { downloadFile, uploadFile, storageKey, deleteFile } from "../lib/storage";
 import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { AUDIT_ACTIONS, recordAuditEvent } from "../lib/audit";
 
 export const projectsRouter = Router();
 const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
@@ -121,6 +122,16 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     .select("*")
     .single();
   if (error) return void res.status(500).json({ detail: error.message });
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.PROJECT_CREATED,
+    targetType: "project",
+    targetId: data.id as string,
+    projectId: data.id as string,
+    metadata: { shared_member_count: cleanedSharedWith.length },
+    req,
+  });
   res.status(201).json({ ...data, documents: [] });
 });
 
@@ -301,20 +312,70 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
     current_version_id?: string | null;
   }[];
   await attachActiveVersionPaths(db, docsTyped);
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: Array.isArray(req.body.shared_with) ? AUDIT_ACTIONS.PROJECT_SHARED : AUDIT_ACTIONS.PROJECT_UPDATED,
+    targetType: "project",
+    targetId: projectId,
+    projectId,
+    metadata: { changed_fields: Object.keys(updates), shared_member_count: Array.isArray(updates.shared_with) ? (updates.shared_with as string[]).length : undefined },
+    req,
+  });
   res.json({ ...data, documents: docsTyped, folders: folderData ?? [] });
 });
 
 // DELETE /projects/:projectId
 projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const db = createServerSupabase();
+
+  const { data: project } = await db
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("user_id", userId)
+    .single();
+  if (!project) return void res.status(404).json({ detail: "Project not found" });
+
+  const { data: docs } = await db
+    .from("documents")
+    .select("id")
+    .eq("project_id", projectId);
+  const documentIds = ((docs ?? []) as { id: string }[]).map((doc) => doc.id);
+  const { data: versions } = documentIds.length
+    ? await db
+        .from("document_versions")
+        .select("storage_path, pdf_storage_path")
+        .in("document_id", documentIds)
+    : { data: [] as { storage_path: string; pdf_storage_path: string | null }[] };
+  const storagePaths = [
+    ...new Set(
+      (versions ?? [])
+        .flatMap((v) => [v.storage_path, v.pdf_storage_path])
+        .filter((p): p is string => typeof p === "string" && p.length > 0),
+    ),
+  ];
+  await Promise.all(storagePaths.map((path) => deleteFile(path).catch(() => {})));
+
   const { error } = await db
     .from("projects")
     .delete()
     .eq("id", projectId)
     .eq("user_id", userId);
   if (error) return void res.status(500).json({ detail: error.message });
+  await recordAuditEvent(db, {
+    actorUserId: userId,
+    actorEmail: userEmail,
+    action: AUDIT_ACTIONS.PROJECT_DELETED,
+    targetType: "project",
+    targetId: projectId,
+    projectId,
+    metadata: { document_count: documentIds.length, storage_object_count: storagePaths.length },
+    req,
+  });
   res.status(204).send();
 });
 
@@ -381,6 +442,17 @@ projectsRouter.post(
         .single();
       if (error || !updated)
         return void res.status(500).json({ detail: "Failed to update document" });
+      await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.DOCUMENT_UPLOADED,
+        targetType: "document",
+        targetId: documentId,
+        projectId,
+        documentId,
+        metadata: { source: "assigned_existing" },
+        req,
+      });
       return void res.json(updated);
     } else {
       // Belongs to another project → duplicate record AND copy the
@@ -466,6 +538,17 @@ projectsRouter.post(
           }
         }
       }
+      await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.DOCUMENT_UPLOADED,
+        targetType: "document",
+        targetId: copy.id as string,
+        projectId,
+        documentId: copy.id as string,
+        metadata: { source: "copied_existing" },
+        req,
+      });
       return void res.status(201).json(copy);
     }
   },
@@ -819,6 +902,16 @@ export async function handleDocumentUpload(
             pdf_storage_path: pdfStoragePath,
         }
       : updated;
+    await recordAuditEvent(db, {
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.DOCUMENT_UPLOADED,
+      targetType: "document",
+      targetId: docId,
+      projectId,
+      documentId: docId,
+      metadata: { filename, file_type: suffix, size_bytes: content.byteLength, page_count: pageCount },
+      req,
+    });
     return void res.status(201).json(responseDoc);
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);

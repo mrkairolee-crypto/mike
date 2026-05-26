@@ -4,6 +4,7 @@ import { createServerSupabase } from "../lib/supabase";
 import { buildContentDisposition, downloadFile } from "../lib/storage";
 import { verifyDownload } from "../lib/downloadTokens";
 import { ensureDocAccess } from "../lib/access";
+import { AUDIT_ACTIONS, recordAuditEvent } from "../lib/audit";
 
 export const downloadsRouter = Router();
 
@@ -60,6 +61,18 @@ downloadsRouter.get("/:token", requireAuth, async (req, res) => {
     const raw = await downloadFile(info.path);
     if (!raw)
         return void res.status(404).json({ detail: "File not found" });
+
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.DOCUMENT_DOWNLOADED,
+        targetType: "document",
+        targetId: version.document_id,
+        projectId: (doc.project_id as string | null) ?? null,
+        documentId: version.document_id,
+        metadata: { filename: info.filename, version_id: version.id, expires_at: info.expiresAt },
+        req,
+    });
 
     res.setHeader("Content-Type", contentTypeFor(info.filename));
     res.setHeader(

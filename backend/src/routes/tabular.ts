@@ -24,6 +24,7 @@ import {
     filterAccessibleDocumentIds,
     listAccessibleProjectIds,
 } from "../lib/access";
+import { AUDIT_ACTIONS, recordAuditEvent } from "../lib/audit";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -260,6 +261,18 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         })),
     );
     if (cells.length) await db.from("tabular_cells").insert(cells);
+
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.TABULAR_REVIEW_CREATED,
+        targetType: "tabular_review",
+        targetId: review.id as string,
+        projectId: project_id ?? null,
+        reviewId: review.id as string,
+        metadata: { document_count: allowedDocumentIds.length, column_count: columns_config.length },
+        req,
+    });
 
     res.status(201).json(review);
 });
@@ -637,6 +650,18 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         }
     }
 
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.TABULAR_REVIEW_UPDATED,
+        targetType: "tabular_review",
+        targetId: reviewId,
+        projectId: ((updatedReview as Record<string, unknown>).project_id as string | null) ?? null,
+        reviewId,
+        metadata: { changed_fields: Object.keys(updates), document_count: persistedDocumentIds?.length },
+        req,
+    });
+
     res.json({
         ...updatedReview,
         ...(persistedDocumentIds ? { document_ids: persistedDocumentIds } : {}),
@@ -654,6 +679,14 @@ tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
         .eq("id", reviewId)
         .eq("user_id", userId);
     if (error) return void res.status(500).json({ detail: error.message });
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.TABULAR_REVIEW_DELETED,
+        targetType: "tabular_review",
+        targetId: reviewId,
+        reviewId,
+        req,
+    });
     res.status(204).send();
 });
 
@@ -895,6 +928,18 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     res.flushHeaders();
 
     const write = (line: string) => res.write(line);
+
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.TABULAR_REVIEW_GENERATED,
+        targetType: "tabular_review",
+        targetId: reviewId,
+        projectId: (review.project_id as string | null) ?? null,
+        reviewId,
+        metadata: { model: tabular_model, document_count: docs.length, column_count: columns.length },
+        req,
+    });
 
     try {
         await Promise.all(
@@ -1343,6 +1388,18 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
     if (chatId) {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
     }
+
+    await recordAuditEvent(db, {
+        actorUserId: userId,
+        actorEmail: userEmail,
+        action: AUDIT_ACTIONS.TABULAR_CHAT_STARTED,
+        targetType: "tabular_review_chat",
+        targetId: chatId,
+        projectId: (review.project_id as string | null) ?? null,
+        reviewId,
+        metadata: { model: tabular_model, document_count: docs.length, column_count: sortedColumns.length },
+        req,
+    });
 
     try {
         const { fullText, events } = await runLLMStream({

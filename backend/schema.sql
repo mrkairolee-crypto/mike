@@ -342,6 +342,41 @@ create index if not exists tabular_review_chat_messages_chat_idx
   on public.tabular_review_chat_messages(chat_id, created_at);
 
 -- ---------------------------------------------------------------------------
+-- Audit events
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.audit_events (
+  id uuid primary key default gen_random_uuid(),
+  actor_user_id text not null,
+  actor_email text,
+  action text not null,
+  target_type text not null,
+  target_id text,
+  project_id uuid references public.projects(id) on delete set null,
+  document_id uuid references public.documents(id) on delete set null,
+  review_id uuid references public.tabular_reviews(id) on delete set null,
+  ip_address text,
+  user_agent text,
+  metadata jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists audit_events_actor_idx
+  on public.audit_events(actor_user_id, created_at desc);
+
+create index if not exists audit_events_project_idx
+  on public.audit_events(project_id, created_at desc);
+
+create index if not exists audit_events_document_idx
+  on public.audit_events(document_id, created_at desc);
+
+create index if not exists audit_events_review_idx
+  on public.audit_events(review_id, created_at desc);
+
+create index if not exists audit_events_action_idx
+  on public.audit_events(action, created_at desc);
+
+-- ---------------------------------------------------------------------------
 -- Direct client grant hardening
 -- ---------------------------------------------------------------------------
 --
@@ -365,4 +400,5 @@ revoke all on public.tabular_reviews from anon, authenticated;
 revoke all on public.tabular_cells from anon, authenticated;
 revoke all on public.tabular_review_chats from anon, authenticated;
 revoke all on public.tabular_review_chat_messages from anon, authenticated;
+revoke all on public.audit_events from anon, authenticated;
 revoke all on public.user_api_keys from anon, authenticated;
