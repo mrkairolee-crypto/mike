@@ -11,6 +11,7 @@ import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
 import { AUDIT_ACTIONS, recordAuditEvent } from "../lib/audit";
+import { listProjectAuditEvents } from "../lib/auditEvents";
 
 export const projectsRouter = Router();
 const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
@@ -174,6 +175,30 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
     documents: docsTyped,
     folders: folderData ?? [],
   });
+});
+
+// GET /projects/:projectId/audit-events
+// Owner-only confidentiality audit view for sensitive matter activity. Shared
+// members can use the project, but they should not see the full access ledger.
+projectsRouter.get("/:projectId/audit-events", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { projectId } = req.params;
+  const db = createServerSupabase();
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok || !access.isOwner) {
+    return void res.status(404).json({ detail: "Project not found" });
+  }
+
+  try {
+    const events = await listProjectAuditEvents(db, projectId, {
+      limit: req.query.limit,
+      offset: req.query.offset,
+    });
+    res.json({ events });
+  } catch {
+    res.status(500).json({ detail: "Unable to load audit events" });
+  }
 });
 
 // GET /projects/:projectId/people

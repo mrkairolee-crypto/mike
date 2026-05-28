@@ -8,6 +8,7 @@ import {
     Loader2,
     Pencil,
     Plus,
+    ShieldCheck,
     Users,
 } from "lucide-react";
 import { HeaderSearchBtn } from "@/app/components/shared/HeaderSearchBtn";
@@ -339,6 +340,7 @@ export function ProjectPageHeader({
     onTitleCommit,
     onSearchChange,
     onOpenPeople,
+    onOpenSecurity,
     onNewChat,
     onNewReview,
 }: {
@@ -353,6 +355,7 @@ export function ProjectPageHeader({
     onTitleCommit: (newName: string) => void | Promise<void>;
     onSearchChange: (search: string) => void;
     onOpenPeople: () => void;
+    onOpenSecurity: () => void;
     onNewChat: () => void;
     onNewReview: () => void;
 }) {
@@ -410,6 +413,14 @@ export function ProjectPageHeader({
                     onChange={onSearchChange}
                     placeholder="Search…"
                 />
+                <button
+                    onClick={onOpenSecurity}
+                    className="flex h-8 w-8 items-center justify-center text-sm text-gray-500 transition-colors hover:text-gray-900 cursor-pointer"
+                    title="Confidentiality and audit log"
+                    aria-label="Confidentiality and audit log"
+                >
+                    <ShieldCheck className="h-4 w-4" />
+                </button>
                 <button
                     onClick={onOpenPeople}
                     className="flex h-8 w-8 items-center justify-center text-sm text-gray-500 transition-colors hover:text-gray-900 cursor-pointer"
